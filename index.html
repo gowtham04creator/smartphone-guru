@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartPhone Guru - Live Mobile Recommendations</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; }
+        .phone-card { transition: all 0.3s ease; }
+        .phone-card:hover { transform: translateY(-10px); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1); }
+        .hero-bg { background: linear-gradient(135deg, #3b82f6, #1e40af); }
+        .price-drop { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    </style>
+</head>
+<body class="bg-gray-50">
+
+    <!-- Header -->
+    <header class="hero-bg text-white py-6">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-mobile-screen-button text-4xl"></i>
+                    <div>
+                        <h1 class="text-3xl font-bold">SmartPhone Guru</h1>
+                        <p class="text-sm opacity-90">Budget Recommendations • Live New Launches • Price Alerts</p>
+                    </div>
+                </div>
+                <button onclick="showAlerts()" class="flex items-center gap-2 bg-white/20 hover:bg-white/30 px-5 py-2 rounded-2xl">
+                    <i class="fa-solid fa-bell"></i>
+                    <span id="alertCount" class="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">0</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="max-w-7xl mx-auto px-6 py-12">
+        <!-- Budget Input -->
+        <div class="bg-white rounded-3xl shadow-xl p-8 mb-12">
+            <h2 class="text-3xl font-bold text-center mb-8 text-gray-800">What's your budget?</h2>
+            
+            <div class="max-w-xl mx-auto">
+                <input type="range" id="budgetSlider" min="8000" max="250000" value="50000" step="1000" class="w-full accent-blue-600 mb-4">
+                <div class="flex justify-between text-xl font-semibold text-gray-700">
+                    <span>₹8,000</span>
+                    <span id="budgetValue" class="text-blue-600 text-4xl font-bold">₹50,000</span>
+                    <span>₹2,50,000</span>
+                </div>
+
+                <button onclick="getRecommendations()" 
+                        class="mt-8 w-full bg-blue-600 hover:bg-blue-700 py-5 rounded-2xl text-white text-xl font-semibold flex items-center justify-center gap-3">
+                    <i class="fa-solid fa-magnifying-glass"></i> SHOW BEST PHONES
+                </button>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="hidden">
+            <h2 class="text-2xl font-bold mb-8 text-gray-800 flex items-center gap-3">
+                <i class="fa-solid fa-star text-yellow-500"></i> Top Recommendations (Latest Models)
+            </h2>
+            <div id="phoneGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"></div>
+        </div>
+
+        <div id="noResults" class="hidden text-center py-20">
+            <i class="fa-solid fa-face-frown text-6xl text-gray-300 mb-6"></i>
+            <h3 class="text-2xl font-semibold text-gray-600">No phones found in this range</h3>
+        </div>
+    </div>
+
+    <!-- Alerts Modal -->
+    <div id="alertModal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+        <div class="bg-white rounded-3xl max-w-lg w-full mx-4 max-h-[90vh] overflow-auto">
+            <div class="p-6 border-b flex justify-between items-center">
+                <h3 class="text-2xl font-bold">Price Drop Alerts</h3>
+                <button onclick="hideAlerts()" class="text-3xl leading-none">×</button>
+            </div>
+            <div id="alertList" class="p-6"></div>
+        </div>
+    </div>
+
+    <footer class="bg-gray-900 text-white py-12">
+        <div class="max-w-7xl mx-auto px-6 text-center">
+            <p class="text-sm opacity-70">Real-time Firebase Updates • New phones auto-added</p>
+        </div>
+    </footer>
+
+    <script>
+        // === FIREBASE CONFIG (Replace with your own from Firebase Console) ===
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY_HERE",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let myAlerts = JSON.parse(localStorage.getItem('phoneAlerts')) || [];
+
+        // Budget slider
+        const slider = document.getElementById('budgetSlider');
+        const budgetValue = document.getElementById('budgetValue');
+
+        slider.addEventListener('input', () => {
+            budgetValue.textContent = '₹' + parseInt(slider.value).toLocaleString('en-IN');
+        });
+
+        function updateAlertCount() {
+            document.getElementById('alertCount').textContent = myAlerts.length;
+        }
+
+        async function getRecommendations() {
+            const budget = parseInt(slider.value);
+            const grid = document.getElementById('phoneGrid');
+            grid.innerHTML = '';
+
+            try {
+                const snapshot = await db.collection('phones').get();
+                let phones = [];
+
+                snapshot.forEach(doc => {
+                    phones.push({ id: doc.id, ...doc.data() });
+                });
+
+                let filtered = phones.filter(p => p.price <= budget + 20000);
+                filtered.sort((a, b) => Math.abs(b.price - budget) - Math.abs(a.price - budget));
+
+                if (filtered.length === 0) {
+                    document.getElementById('noResults').classList.remove('hidden');
+                    document.getElementById('results').classList.add('hidden');
+                    return;
+                }
+
+                document.getElementById('noResults').classList.add('hidden');
+                document.getElementById('results').classList.remove('hidden');
+
+                filtered.forEach(phone => {
+                    const hasDrop = phone.originalPrice && phone.originalPrice > phone.price;
+                    const dropPercent = hasDrop ? Math.round(((phone.originalPrice - phone.price) / phone.originalPrice) * 100) : 0;
+
+                    const cardHTML = `
+                        <div class="phone-card bg-white rounded-3xl overflow-hidden border border-gray-100 ${hasDrop ? 'price-drop border-red-200' : ''}">
+                            <img src="${phone.image || 'https://picsum.photos/id/201/400/300'}" class="w-full h-56 object-cover">
+                            <div class="p-6">
+                                <div class="flex justify-between items-start">
+                                    <div>
+                                        <h3 class="font-bold text-xl">${phone.name}</h3>
+                                        <p class="text-sm text-gray-500">${phone.brand}</p>
+                                    </div>
+                                    <div class="text-right">
+                                        ${hasDrop ? `<p class="text-red-500 line-through text-sm">₹${phone.originalPrice.toLocaleString('en-IN')}</p>` : ''}
+                                        <p class="text-2xl font-bold text-green-600">₹${phone.price.toLocaleString('en-IN')}</p>
+                                        ${hasDrop ? `<p class="text-red-500 text-xs font-medium">↓ ${dropPercent}% DROP</p>` : ''}
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-2 gap-4 my-6 text-sm bg-gray-50 p-4 rounded-2xl">
+                                    <div><p class="text-gray-400">RAM</p><p class="font-semibold">${phone.ram}</p></div>
+                                    <div><p class="text-gray-400">Storage</p><p class="font-semibold">${phone.storage}</p></div>
+                                    <div><p class="text-gray-400">Battery</p><p class="font-semibold">${phone.battery}</p></div>
+                                    <div><p class="text-gray-400">Camera</p><p class="font-semibold">${phone.camera}</p></div>
+                                </div>
+                                
+                                <div class="flex gap-3">
+                                    <button onclick="setPriceAlert('${phone.id}', '${phone.name}', ${phone.price})" 
+                                            class="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-700 py-3 rounded-2xl text-sm font-medium">
+                                        <i class="fa-solid fa-bell"></i> Set Alert
+                                    </button>
+                                    <button onclick="alert('Added ${phone.name} to wishlist!')" 
+                                            class="flex-1 bg-gray-100 hover:bg-gray-200 py-3 rounded-2xl text-sm font-medium">
+                                        Wishlist
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    grid.innerHTML += cardHTML;
+                });
+            } catch (error) {
+                console.error("Error:", error);
+                alert("Check Firebase connection or add some phones in Firestore.");
+            }
+        }
+
+        function setPriceAlert(phoneId, name, price) {
+            if (myAlerts.find(a => a.id === phoneId)) {
+                alert("Alert already set!");
+                return;
+            }
+            myAlerts.push({ id: phoneId, name: name, targetPrice: price });
+            localStorage.setItem('phoneAlerts', JSON.stringify(myAlerts));
+            updateAlertCount();
+            alert(`Price drop alert set for ${name}!`);
+        }
+
+        function showAlerts() {
+            const list = document.getElementById('alertList');
+            list.innerHTML = '';
+
+            if (myAlerts.length === 0) {
+                list.innerHTML = `<p class="text-gray-500 text-center py-12">No active price alerts yet.</p>`;
+            } else {
+                myAlerts.forEach((alert, index) => {
+                    list.innerHTML += `
+                        <div class="flex justify-between items-center p-4 border-b">
+                            <div>
+                                <p class="font-medium">${alert.name}</p>
+                                <p class="text-sm text-gray-500">Target: ₹${alert.targetPrice.toLocaleString('en-IN')}</p>
+                            </div>
+                            <button onclick="removeAlert(${index})" class="text-red-500 hover:text-red-700">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                });
+            }
+            document.getElementById('alertModal').classList.remove('hidden');
+        }
+
+        function hideAlerts() {
+            document.getElementById('alertModal').classList.add('hidden');
+        }
+
+        function removeAlert(index) {
+            myAlerts.splice(index, 1);
+            localStorage.setItem('phoneAlerts', JSON.stringify(myAlerts));
+            updateAlertCount();
+            showAlerts();
+        }
+
+        window.onload = () => {
+            updateAlertCount();
+            getRecommendations();
+        };
+    </script>
+</body>
+</html>
